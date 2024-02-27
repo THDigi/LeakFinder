@@ -21,7 +21,7 @@ namespace Digi.LeakFinder
             IMyTerminalControlOnOffSwitch c = MyAPIGateway.TerminalControls.CreateControl<IMyTerminalControlOnOffSwitch, IMyAirVent>("FindAirLeak");
             c.Title = MyStringId.GetOrCompute("Leak Finder");
             c.Tooltip = MyStringId.GetOrCompute("Shows you a trail leading towards the outside of the ship."
-                                              + "\nDoes not update trail if ship changes, you have to again press Find."
+                                              + "\nIt re-computes automatically when ship is modified."
                                               + "\nAdded by Leak Finder mod.");
             c.OnText = MyStringId.GetOrCompute("Find");
             c.OffText = MyStringId.GetOrCompute("Hide");
@@ -76,7 +76,7 @@ namespace Digi.LeakFinder
 
                 if(leakInfo.Status != InfoStatus.None)
                 {
-                    leakInfo.ClearStatus();
+                    leakInfo.ClearStatus("manual from terminal");
                 }
                 else
                 {

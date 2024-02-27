@@ -87,19 +87,6 @@ namespace Digi.LeakFinder
             {
                 int tick = MyAPIGateway.Session.GameplayFrameCounter;
 
-                if(tick % 60 == 40)
-                {
-                    // if room is sealed and the leak info is running then clear it
-                    if(LeakInfo.UsedFromVent != null && LeakInfo.Status != InfoStatus.None)
-                    {
-                        var logic = LeakInfo.UsedFromVent.GameLogic.GetAs<AirVent>();
-                        if(logic != null && logic.IsRoomSealed())
-                        {
-                            LeakInfo.ClearStatus();
-                        }
-                    }
-                }
-
                 if(SaveConfigAtTick > 0 && SaveConfigAtTick <= tick)
                 {
                     SaveConfigAtTick = 0;
@@ -107,7 +94,9 @@ namespace Digi.LeakFinder
                 }
 
                 if(LeakInfo.RunUpdate)
+                {
                     LeakInfo.Update();
+                }
             }
             catch(Exception e)
             {

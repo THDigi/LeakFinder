@@ -30,16 +30,18 @@ namespace Digi.LeakFinder
         Task Task;
         IMyHudNotification Notify = null;
         const string NotifyFont = MyFontEnum.Debug;
-        int DrawUntilTick;
+        //int DrawUntilTick;
         bool StopSpawning = false; // used to stop spawning of particles when the first particle reaches the end point and loops back around
         int DelayParticles = 0; // used to count spawning particles in Draw(), isolated from gamelogic (which is affected by pause)
         readonly List<Particle> Particles = new List<Particle>();
         MyConcurrentPool<Particle> ParticlePool = new MyConcurrentPool<Particle>(expectedAllocations: 0);
         ParticleData CurrentParticleData = null;
         int ReleaseMemoryAt = 0; // for memory releasing
+        List<IMyDoor> DoorEvents = new List<IMyDoor>();
+        int RescanAtTick = 0;
 
         // used in background thread
-        Vector3I StartPosition;
+        public Vector3I StartPosition { get; private set; }
         BreadcrumbHeap.Crumb Crumb = null;
         readonly BreadcrumbHeap Crumbs = new BreadcrumbHeap();
         readonly HashSet<Vector3I> Scanned = new HashSet<Vector3I>(Vector3I.Comparer);
@@ -82,12 +84,58 @@ namespace Digi.LeakFinder
 
         public void Dispose()
         {
-            ClearStatus();
+            ClearStatus("LeakInfo.Dispose()");
         }
 
         public void Update()
         {
             int tick = MyAPIGateway.Session.GameplayFrameCounter;
+
+            if(RescanAtTick > 0 && RescanAtTick <= tick)
+            {
+                if(Status == InfoStatus.Computing)
+                {
+                    RescanAtTick += (int)MyEngineConstants.UPDATE_STEPS_PER_SECOND * 1;
+                }
+                else
+                {
+                    RescanAtTick = 0;
+
+                    var vent = UsedFromVent;
+                    if(vent != null)
+                    {
+                        AirVent logic = vent.GameLogic?.GetAs<AirVent>();
+
+                        if(!vent.IsWorking || vent.MarkedForClose || logic == null)
+                        {
+                            ClearStatus("rescan: vent not working/closed");
+                            NotifyHUD("Air vent no longer working", 3000, MyFontEnum.Red);
+                        }
+                        else if(logic.IsRoomSealed())
+                        {
+                            ClearStatus("rescan: room sealed");
+                            NotifyHUD("No more leaks!", 3000, MyFontEnum.Green);
+                        }
+                        else
+                        {
+                            StartThread(UsedFromVent, StartPosition);
+                        }
+                    }
+                    else
+                    {
+                        // TODO: what happens here?
+                    }
+                }
+            }
+
+            if(tick % 60 == 40 && RescanAtTick == 0 && Status != InfoStatus.None)
+            {
+                var logic = UsedFromVent?.GameLogic?.GetAs<AirVent>();
+                if(logic != null && logic.IsRoomSealed())
+                {
+                    ClearStatus("periodic room sealed check");
+                }
+            }
 
             if(Status == InfoStatus.Computing)
             {
@@ -95,11 +143,11 @@ namespace Digi.LeakFinder
                 {
                     if(!TaskProcessing)
                     {
-                        NotifyHUD($"Waiting for available thread.", 1000, NotifyFont);
+                        NotifyHUD("Waiting for available thread.", 1000, NotifyFont);
                     }
                     else if(TaskGeneratingLines)
                     {
-                        NotifyHUD($"Computing path, finalizing...", 1000, NotifyFont);
+                        NotifyHUD("Computing path, finalizing...", 1000, NotifyFont);
                     }
                     else
                     {
@@ -111,20 +159,22 @@ namespace Digi.LeakFinder
             }
             else if(Status == InfoStatus.Drawing) // if the path to air leak is shown then decrease the countdown timer or clear it directly if the grid suddenly vanishes.
             {
-                if(DrawUntilTick <= tick)
-                {
-                    ClearStatus();
-                }
+                //if(DrawUntilTick <= tick)
+                //{
+                //    ClearStatus();
+                //}
             }
-            else if(Status == InfoStatus.None && ReleaseMemoryAt > 0 && ReleaseMemoryAt < tick)
+            else if(Status == InfoStatus.None)
             {
-                ReleaseMemoryAt = 0;
-                RunUpdate = false;
+                if(ReleaseMemoryAt > 0 && ReleaseMemoryAt < tick)
+                {
+                    ReleaseMemoryAt = 0;
 
-                Particles.Capacity = 0;
-                ParticlePool = new MyConcurrentPool<Particle>(expectedAllocations: 0);
+                    Particles.Capacity = 0;
+                    ParticlePool = new MyConcurrentPool<Particle>(expectedAllocations: 0);
 
-                Crumbs.ClearPool();
+                    Crumbs.ClearPool();
+                }
             }
         }
 
@@ -149,7 +199,7 @@ namespace Digi.LeakFinder
         /// <summary>
         /// Clears the lines, various status data and gracefully stops the processing thread if running.
         /// </summary>
-        public void ClearStatus()
+        public void ClearStatus(string caller)
         {
             if(Status == InfoStatus.Computing) // gracefully cancel the task by telling it to stop doing stuff and then wait for it to finish so we can clear its data.
             {
@@ -158,14 +208,27 @@ namespace Digi.LeakFinder
             }
 
             if(SelectedGrid != null)
+            {
                 SelectedGrid.OnMarkForClose -= SelectedGridMarkedForClose;
+                SelectedGrid.OnBlockAdded -= GridBlockChanges;
+                SelectedGrid.OnBlockRemoved -= GridBlockChanges;
+                SelectedGrid.OnBlockIntegrityChanged -= GridBlockChanges;
+                SelectedGrid.OnGridSplit -= GridSplitOrMerge;
+                SelectedGrid.OnGridMerge -= GridSplitOrMerge;
+            }
+
+            foreach(IMyDoor door in DoorEvents)
+            {
+                door.DoorStateChanged -= DoorStateChanged;
+            }
+            DoorEvents.Clear();
 
             SetStatus(InfoStatus.None);
 
             ReleaseMemoryAt = MyAPIGateway.Session.GameplayFrameCounter + ReleaseMemoryAfterTicks;
             DrawLines.Clear();
             StopSpawning = false;
-            DrawUntilTick = 0;
+            //DrawUntilTick = 0;
             Crumb = null;
             SelectedGrid = null;
             CurrentParticleData = null;
@@ -184,7 +247,7 @@ namespace Digi.LeakFinder
 
         public void StartThread(IMyAirVent block, Vector3I startPosition)
         {
-            ClearStatus();
+            ClearStatus("StartThread()");
 
             if(!Enabled)
                 return;
@@ -193,6 +256,18 @@ namespace Digi.LeakFinder
             UsedFromVent = block;
             SelectedGrid = block.CubeGrid;
             SelectedGrid.OnMarkForClose += SelectedGridMarkedForClose;
+            SelectedGrid.OnBlockAdded += GridBlockChanges;
+            SelectedGrid.OnBlockRemoved += GridBlockChanges;
+            SelectedGrid.OnBlockIntegrityChanged += GridBlockChanges;
+            SelectedGrid.OnGridSplit += GridSplitOrMerge;
+            SelectedGrid.OnGridMerge += GridSplitOrMerge;
+
+            foreach(IMyDoor door in SelectedGrid.GetFatBlocks<IMyDoor>())
+            {
+                DoorEvents.Add(door);
+                door.DoorStateChanged += DoorStateChanged;
+            }
+
             CurrentParticleData = ParticleDataGridSize[(int)SelectedGrid.GridSizeEnum]; // particle settings for the grid cell size
             StartPosition = startPosition;
 
@@ -209,8 +284,28 @@ namespace Digi.LeakFinder
 
         void SelectedGridMarkedForClose(IMyEntity ent)
         {
-            ent.OnMarkForClose -= SelectedGridMarkedForClose;
-            ClearStatus();
+            ClearStatus("Grid closed");
+        }
+
+        void GridSplitOrMerge(IMyCubeGrid gridA, IMyCubeGrid gridB)
+        {
+            ScheduleRescan();
+        }
+
+        void GridBlockChanges(IMySlimBlock slim)
+        {
+            ScheduleRescan();
+        }
+
+        void DoorStateChanged(bool open)
+        {
+            ScheduleRescan();
+        }
+
+        void ScheduleRescan()
+        {
+            NotifyHUD("Ship changed, rescanning soon...", 1000, MyFontEnum.Debug);
+            RescanAtTick = MyAPIGateway.Session.GameplayFrameCounter + (int)MyEngineConstants.UPDATE_STEPS_PER_SECOND * 1;
         }
 
         #region Pathfinding
@@ -226,7 +321,7 @@ namespace Digi.LeakFinder
                 TaskProcessing = true;
 
                 // generate crumbs and path cost
-                Crumb = PathfindGenerateCrumbs(SelectedGrid, ref StartPosition);
+                Crumb = PathfindGenerateCrumbs(SelectedGrid, StartPosition);
 
                 if(Crumb != null)
                 {
@@ -237,6 +332,10 @@ namespace Digi.LeakFinder
                         DrawLines.Add(MyTuple.Create(Crumb.Next.Position, Crumb.Position));
                         Crumb = Crumb.Next;
                     }
+                }
+                else
+                {
+                    // TODO: what happens here?
                 }
             }
             finally
@@ -251,7 +350,7 @@ namespace Digi.LeakFinder
         /// <para>Returns null if no path was found.</para>
         /// <para>NOTE: It can return null if <paramref name="start"/> is inside a closed door's position.</para>
         /// </summary>
-        BreadcrumbHeap.Crumb PathfindGenerateCrumbs(IMyCubeGrid grid, ref Vector3I start) // used in a background thread
+        BreadcrumbHeap.Crumb PathfindGenerateCrumbs(IMyCubeGrid grid, Vector3I start) // used in a background thread
         {
             Scanned.Clear();
             Crumbs.Clear();
@@ -338,24 +437,25 @@ namespace Digi.LeakFinder
 
                 if(CancelTask)
                 {
-                    ClearStatus();
+                    ClearStatus("task cancelled");
 
                     NotifyHUD("Cancelled.", 2000, MyFontEnum.Red);
                 }
                 else if(Crumb == null)
                 {
-                    ClearStatus();
+                    ClearStatus("crumb = null / no leaks");
 
                     NotifyHUD("No leaks!", 2000, MyFontEnum.Green);
                 }
                 else
                 {
-                    int drawSeconds = (int)MathHelper.Clamp((DrawLines.Count * 2 * SelectedGrid.GridSize), DrawMinSeconds, DrawMaxSeconds);
-                    DrawUntilTick = MyAPIGateway.Session.GameplayFrameCounter + ((int)MyEngineConstants.UPDATE_STEPS_PER_SECOND * drawSeconds);
+                    //int drawSeconds = (int)MathHelper.Clamp((DrawLines.Count * 2 * SelectedGrid.GridSize), DrawMinSeconds, DrawMaxSeconds);
+                    //DrawUntilTick = MyAPIGateway.Session.GameplayFrameCounter + ((int)MyEngineConstants.UPDATE_STEPS_PER_SECOND * drawSeconds);
 
                     SetStatus(InfoStatus.Drawing);
 
-                    NotifyHUD($"Found leak, path rendered (visible for {drawSeconds.ToString()}s)", 3000, NotifyFont);
+                    //NotifyHUD($"Found leak, path rendered (visible for {drawSeconds.ToString()}s)", 3000, NotifyFont);
+                    NotifyHUD($"Found leak, path rendered", 3000, NotifyFont);
                 }
 
                 CancelTask = false;
@@ -395,12 +495,12 @@ namespace Digi.LeakFinder
             MatrixD camMatrix = MyAPIGateway.Session.Camera.WorldMatrix;
             Vector3D camPos = camMatrix.Translation;
 
-            double distSq = gridSphere.Radius + 500;
+            double distSq = gridSphere.Radius + 100;
             distSq *= distSq;
             if(Vector3D.DistanceSquared(gridSphere.Center, camPos) > distSq)
             {
-                NotifyHUD("Too far, hidden.", 2000, MyFontEnum.Red);
-                ClearStatus();
+                NotifyHUD("Too far, hidden.", 4000, MyFontEnum.Red);
+                ClearStatus("too far");
                 return;
             }
 
@@ -411,13 +511,13 @@ namespace Digi.LeakFinder
             Color particleColorWorld = LeakFinderMod.Instance.ClientConfig.ParticleWorld;
             Color particleColorOverlay = LeakFinderMod.Instance.ClientConfig.ParticleOverlay;
 
-            int drawTicksLeft = DrawUntilTick - MyAPIGateway.Session.GameplayFrameCounter;
-            if(drawTicksLeft < DrawFadeOutTicks)
-            {
-                alpha = (drawTicksLeft / (float)DrawFadeOutTicks);
-                particleColorWorld *= alpha;
-                particleColorOverlay *= alpha;
-            }
+            //int drawTicksLeft = DrawUntilTick - MyAPIGateway.Session.GameplayFrameCounter;
+            //if(drawTicksLeft < DrawFadeOutTicks)
+            //{
+            //    alpha = (drawTicksLeft / (float)DrawFadeOutTicks);
+            //    particleColorWorld *= alpha;
+            //    particleColorOverlay *= alpha;
+            //}
 
             // start dot
             Vector3D startPointWorld = SelectedGrid.GridIntegerToWorld(DrawLines[DrawLines.Count - 1].Item1);
