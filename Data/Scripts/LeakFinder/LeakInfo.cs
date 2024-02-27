@@ -93,38 +93,33 @@ namespace Digi.LeakFinder
 
             if(RescanAtTick > 0 && RescanAtTick <= tick)
             {
-                if(Status == InfoStatus.Computing)
-                {
-                    RescanAtTick += (int)MyEngineConstants.UPDATE_STEPS_PER_SECOND * 1;
-                }
-                else
-                {
-                    RescanAtTick = 0;
+                RescanAtTick = 0;
 
-                    var vent = UsedFromVent;
-                    if(vent != null)
+                IMyAirVent vent = UsedFromVent;
+                Vector3I start = StartPosition;
+
+                ClearStatus("rescan, cancel everything");
+
+                if(vent != null)
+                {
+                    AirVent logic = vent.GameLogic?.GetAs<AirVent>();
+
+                    if(vent.MarkedForClose || logic == null)
                     {
-                        AirVent logic = vent.GameLogic?.GetAs<AirVent>();
-
-                        if(!vent.IsWorking || vent.MarkedForClose || logic == null)
-                        {
-                            ClearStatus("rescan: vent not working/closed");
-                            NotifyHUD("Air vent no longer working", 3000, MyFontEnum.Red);
-                        }
-                        else if(logic.IsRoomSealed())
-                        {
-                            ClearStatus("rescan: room sealed");
-                            NotifyHUD("No more leaks!", 3000, MyFontEnum.Green);
-                        }
-                        else
-                        {
-                            StartThread(UsedFromVent, StartPosition);
-                        }
+                        NotifyHUD("AirVent was removed", 3000, MyFontEnum.Red);
+                    }
+                    else if(logic.IsRoomSealed())
+                    {
+                        NotifyHUD("No more leaks!", 3000, MyFontEnum.Green);
                     }
                     else
                     {
-                        // TODO: what happens here?
+                        StartThread(vent, start);
                     }
+                }
+                else
+                {
+                    // TODO: what happens here?
                 }
             }
 
@@ -271,15 +266,11 @@ namespace Digi.LeakFinder
             CurrentParticleData = ParticleDataGridSize[(int)SelectedGrid.GridSizeEnum]; // particle settings for the grid cell size
             StartPosition = startPosition;
 
-            //int gridCells = (SelectedGrid.Max - SelectedGrid.Min).Volume();
-            //if(gridCells <= 50000)
-            //    Task = MyAPIGateway.Parallel.Start(ThreadRun, ThreadFinished);
-            //else
             Task = MyAPIGateway.Parallel.StartBackground(ThreadRun, ThreadFinished);
-
             SetStatus(InfoStatus.Computing);
-            RunUpdate = true;
             NotifyHUD("Computing path...", 1000 * 5, NotifyFont);
+
+            RunUpdate = true;
         }
 
         void SelectedGridMarkedForClose(IMyEntity ent)
@@ -304,8 +295,8 @@ namespace Digi.LeakFinder
 
         void ScheduleRescan()
         {
-            NotifyHUD("Ship changed, rescanning soon...", 1000, MyFontEnum.Debug);
-            RescanAtTick = MyAPIGateway.Session.GameplayFrameCounter + (int)MyEngineConstants.UPDATE_STEPS_PER_SECOND * 1;
+            NotifyHUD("Ship changed, rescanning soon...", 2000, MyFontEnum.Debug);
+            RescanAtTick = MyAPIGateway.Session.GameplayFrameCounter + (int)MyEngineConstants.UPDATE_STEPS_PER_SECOND * 2;
         }
 
         #region Pathfinding
@@ -329,6 +320,9 @@ namespace Digi.LeakFinder
 
                     while(Crumb.Next != null)
                     {
+                        if(CancelTask)
+                            return;
+
                         DrawLines.Add(MyTuple.Create(Crumb.Next.Position, Crumb.Position));
                         Crumb = Crumb.Next;
                     }
@@ -463,7 +457,7 @@ namespace Digi.LeakFinder
                     SetStatus(InfoStatus.Drawing);
 
                     //NotifyHUD($"Found leak, path rendered (visible for {drawSeconds.ToString()}s)", 3000, NotifyFont);
-                    NotifyHUD($"Found leak, path rendered", 3000, NotifyFont);
+                    NotifyHUD("Found leak, path rendered", 3000, NotifyFont);
                 }
 
                 CancelTask = false;
