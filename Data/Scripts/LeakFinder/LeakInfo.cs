@@ -389,18 +389,26 @@ namespace Digi.LeakFinder
                 for(int dirIdx = 0; dirIdx < DirLen; ++dirIdx)
                 {
                     Vector3I target = crumb.Position + directions[dirIdx];
+
                     Vector3I s = Vector3I.Min(max - target, target - min);
-                    int distToOutside = Math.Min(s.X, Math.Min(s.Y, s.Z)) + 1;
-                    if(distToOutside < 0)
-                        return crumb;
+                    int distToOutside = Math.Min(s.X, Math.Min(s.Y, s.Z)) + 1; // adding 1 to offset edges
                     // HACK: manually inlined ^v
                     //int distToOutside = DistanceToBox(target, grid.Min, grid.Max) + 1; // adding 1 to offset edges
-                    //if(distToOutside < 0) // gone outside of edge already, exit
-                    //    return crumb;
+
+                    if(distToOutside < 0) // gone outside of edge already, exit
+                        return crumb;
 
                     if(gridBB.Contains(target) == ContainmentType.Contains && !Pressurization.IsAirtightBetweenPositions(grid, crumb.Position, target))
                     {
-                        int pathCost = crumb.PathCost + 1; // direction movement cost, always 1 in our case
+                        int directionCost = 1; // cost to turn
+                        if(crumb.Next != null)
+                        {
+                            var moveDir = Base6Directions.GetDirection(crumb.Position - crumb.Next.Position);
+                            if(moveDir == Base6Directions.EnumDirections[dirIdx])
+                                directionCost = 0; // cost to go straight
+                        }
+
+                        int pathCost = crumb.PathCost + directionCost; // direction movement cost
                         int cost = pathCost + distToOutside; // using distance to box edge instead of a predefined end
 
                         Crumbs.Add(target, cost, pathCost, crumb);
