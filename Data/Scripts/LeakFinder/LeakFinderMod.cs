@@ -97,6 +97,15 @@ namespace Digi.LeakFinder
                 {
                     LeakInfo.Update();
                 }
+
+                if(tick % 60 == 40)
+                {
+                    if(VentInTerminal != null)
+                    {
+                        VentInTerminal.RefreshCustomInfo();
+                        VentInTerminal.SetDetailedInfoDirty();
+                    }
+                }
             }
             catch(Exception e)
             {
@@ -132,10 +141,12 @@ namespace Digi.LeakFinder
             }
 
             VentInTerminal = (block as IMyAirVent);
-
             if(VentInTerminal != null)
             {
                 VentInTerminal.OnMarkForClose += ViewedVentMarkedForClose;
+
+                VentInTerminal.RefreshCustomInfo();
+                VentInTerminal.SetDetailedInfoDirty();
             }
         }
 
