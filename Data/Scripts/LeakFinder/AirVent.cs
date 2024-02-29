@@ -120,18 +120,18 @@ namespace Digi.LeakFinder
                     return;
 
                 str.Append('\n');
-                str.Append("Air leak scan status:\n");
+                str.Append("Leak Finder status:\n");
 
                 LeakInfo leakInfo = LeakFinderMod.Instance.LeakInfo;
                 if(leakInfo == null)
                 {
-                    str.Append("Not initialized.");
+                    str.Append("ERROR: Not initialized.");
                     return;
                 }
 
                 if(!leakInfo.Enabled)
                 {
-                    str.Append("Disabled.");
+                    str.Append("Oxygen or pressurization disabled.");
                     return;
                 }
 
@@ -143,16 +143,16 @@ namespace Digi.LeakFinder
                         else if(logic.IsRoomSealed())
                             str.Append("Area is sealed.");
                         else
-                            str.Append("Ready.");
+                            str.Append("Ready to scan.");
                         break;
                     case InfoStatus.Computing:
                         str.Append("Computing...");
                         break;
                     case InfoStatus.Drawing:
                         if(leakInfo.UsedFromVent != null && leakInfo.UsedFromVent.CubeGrid != block.CubeGrid)
-                            str.Append("Leak found and displayed on another grid.");
+                            str.Append("Leak path rendered on another grid.");
                         else
-                            str.Append("Leak found and displayed.");
+                            str.Append("Leak path rendered.");
                         break;
                 }
 
