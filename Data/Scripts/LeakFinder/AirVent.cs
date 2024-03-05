@@ -109,16 +109,10 @@ namespace Digi.LeakFinder
             return _roomSealed;
         }
 
-        static void CustomInfo(IMyTerminalBlock block, StringBuilder str)
+        void CustomInfo(IMyTerminalBlock _, StringBuilder str)
         {
             try
             {
-                IMyAirVent vent = (IMyAirVent)block;
-                AirVent logic = block.GameLogic.GetAs<AirVent>();
-
-                if(logic == null)
-                    return;
-
                 str.Append('\n');
                 str.Append("Leak Finder status:\n");
 
@@ -138,9 +132,9 @@ namespace Digi.LeakFinder
                 switch(leakInfo.Status)
                 {
                     case InfoStatus.None:
-                        if(!vent.IsWorking)
+                        if(!Block.IsWorking)
                             str.Append("Air vent not working.");
-                        else if(logic.IsRoomSealed())
+                        else if(IsRoomSealed())
                             str.Append("Area is sealed.");
                         else
                             str.Append("Ready to scan.");
@@ -149,7 +143,7 @@ namespace Digi.LeakFinder
                         str.Append("Computing...");
                         break;
                     case InfoStatus.Drawing:
-                        if(leakInfo.UsedFromVent != null && leakInfo.UsedFromVent.CubeGrid != block.CubeGrid)
+                        if(leakInfo.UsedFromVent != null && leakInfo.UsedFromVent.CubeGrid != Block.CubeGrid)
                             str.Append("Leak path rendered on another grid.");
                         else
                             str.Append("Leak path rendered.");

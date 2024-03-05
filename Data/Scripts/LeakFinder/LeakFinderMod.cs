@@ -98,6 +98,7 @@ namespace Digi.LeakFinder
                     LeakInfo.Update();
                 }
 
+                // refresh detailed info for currently viewed vent every second (offset by 40 ticks to not match with other stuff)
                 if(tick % 60 == 40)
                 {
                     if(VentInTerminal != null)
